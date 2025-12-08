@@ -1,2 +1,6 @@
 pretrained_models/
 results/
+result/
+datasets/
+attn_mats/
+__pycache__/

@@ -102,10 +102,10 @@ def process_and_evaluate(
             img_gt_np = img_gt_np[: h_old * args.scale, : w_old * args.scale, ...]
             img_gt_np = np.squeeze(img_gt_np)
 
-            psnr_val = util.calculate_psnr(output_np, img_gt_np, crop_border=border)
-            ssim_val = util.calculate_ssim(output_np, img_gt_np, crop_border=border)
-            psnr_y_val = util.calculate_psnr(output_np, img_gt_np, crop_border=border, test_y_channel=True)
-            ssim_y_val = util.calculate_ssim(output_np, img_gt_np, crop_border=border, test_y_channel=True)
+            psnr_val = util.calculate_psnr(output_np, img_gt_np, crop_border=0)
+            ssim_val = util.calculate_ssim(output_np, img_gt_np, crop_border=0)
+            psnr_y_val = util.calculate_psnr(output_np, img_gt_np, crop_border=0, test_y_channel=True)
+            ssim_y_val = util.calculate_ssim(output_np, img_gt_np, crop_border=0, test_y_channel=True)
             test_results["psnr"].append(psnr_val)
             test_results["ssim"].append(ssim_val)
             test_results["psnr_y"].append(psnr_y_val)
