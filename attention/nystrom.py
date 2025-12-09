@@ -25,6 +25,9 @@ class NystromAttention(nn.Module):
         self.num_landmarks = num_landmarks
         self.iters = 6 #iters hardcoding iters
         self.init_option = init_option
+        # ======================================== debug ========================================
+        self.capture = {}
+        # ======================================== debug ========================================
 
     def forward(self, q, k, v, x_shape, **kwargs):
 
@@ -42,7 +45,14 @@ class NystromAttention(nn.Module):
         kernel_2 = F.softmax(q_m @ k_m.transpose(-1, -2), dim=-1)
         kernel_3 = F.softmax(q_m @ k.transpose(-1, -2), dim=-1)
 
-        x = (kernel_1 @ self.iterative_inv(kernel_2, n_iter=self.iters)) @ (kernel_3 @ v)
+        # x = (kernel_1 @ self.iterative_inv(kernel_2, n_iter=self.iters)) @ (kernel_3 @ v)
+        approx_attn = kernel_1 @ self.iterative_inv(kernel_2, n_iter=self.iters) @ kernel_3
+        # approx_attn = F.softmax(q @ k.transpose(-2, -1), dim=-1)
+        x = approx_attn @ v
+        # ======================================== debug ========================================
+        self.capture['approx'] = approx_attn
+        self.capture['softmax'] = F.softmax(q @ k.transpose(-2, -1), dim=-1)
+        # ======================================== debug ========================================
         return x
     
     def moore_penrose_iter_pinv(self, x, iters = 6):

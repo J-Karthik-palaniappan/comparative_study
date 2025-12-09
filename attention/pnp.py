@@ -48,6 +48,9 @@ class PnPNystraAttention(nn.Module):
 
         self.num_landmarks = num_landmarks
         self.iters = iters
+        # ======================================== debug ========================================
+        self.capture = {}
+        # ======================================== debug ========================================
 
     def forward(self, q, k, v, x_shape, **kwargs):
 
@@ -58,12 +61,25 @@ class PnPNystraAttention(nn.Module):
         q_m = F.adaptive_avg_pool2d(q.reshape(B_*self.num_heads, window_size, window_size, self.dim//self.num_heads).permute(0, 3, 1, 2), output_size = (h, w)).permute(0, 2, 3, 1).reshape(B_, self.num_heads, self.num_landmarks, self.dim//self.num_heads)
         k_m = F.adaptive_avg_pool2d(k.reshape(B_*self.num_heads, window_size, window_size, self.dim//self.num_heads).permute(0, 3, 1, 2), output_size = (h, w)).permute(0, 2, 3, 1).reshape(B_, self.num_heads, self.num_landmarks, self.dim//self.num_heads)
 
-        temp = self.activ(q_m @ k_m.transpose(-2, -1)) 
+        # temp = self.activ(q_m @ k_m.transpose(-2, -1)) 
         
-        pseudo_inv = self.moore_penrose_iter_pinv(temp, self.iters)
-        prod = (self.activ(q @ k_m.transpose(-2, -1)) @ pseudo_inv) @ (self.activ(q_m @ k.transpose(-2,-1)) @ torch.cat([v, torch.ones_like(v[..., :1])], dim=-1))
+        # pseudo_inv = self.moore_penrose_iter_pinv(temp, self.iters)
+        # prod = (self.activ(q @ k_m.transpose(-2, -1)) @ pseudo_inv) @ (self.activ(q_m @ k.transpose(-2,-1)) @ torch.cat([v, torch.ones_like(v[..., :1])], dim=-1))
 
-        x = (prod[..., :-1] / (prod[..., -1].unsqueeze(-1) + 1e-12))
+        # x = (prod[..., :-1] / (prod[..., -1].unsqueeze(-1) + 1e-12))
+
+        K1 = self.activ(q @ k_m.transpose(-2, -1))
+        K2 = self.activ(q_m @ k_m.transpose(-2, -1))
+        K3 = self.activ(q_m @ k.transpose(-2, -1))    
+        K2_pinv = self.moore_penrose_iter_pinv(K2, self.iters)
+        approx_raw = K1 @ K2_pinv @ K3
+        approx_attn = approx_raw / (approx_raw.sum(dim=-1, keepdim=True) + 1e-12)
+        x = approx_attn @ v
+        # ======================================== debug ========================================
+        self.capture['exp'] = torch.exp(q @ k.transpose(-2, -1))
+        self.capture['softmax'] = F.softmax(q @ k.transpose(-2, -1), dim=-1)
+        self.capture['approx'] = approx_attn
+        # ======================================== debug ========================================
         return x
     
     def moore_penrose_iter_pinv(self, x, iters = 6):

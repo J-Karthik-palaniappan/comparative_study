@@ -27,7 +27,8 @@ def save_all_attention(model, save_dir="attn_mats"):
         )
         
         for G, block in enumerate(groups):
-            attn_dict = block.attn.capture   # {pre:..., mid:..., post:...}
+            # attn_dict = block.attn.capture   # {pre:..., mid:..., post:...}
+            attn_dict = block.attn.attention.capture # debug
 
             for stage_name, attn_matrix in attn_dict.items():
                 if attn_matrix is None:
@@ -205,12 +206,19 @@ if __name__ == "__main__":
     model = model.to(args.device)
     model.eval()
 
-    save_dir = f"result/swinir_x{args.scale}"
+    save_dir = f"results/swinir_x{args.scale}"
     os.makedirs(save_dir, exist_ok=True)
 
     print("testing")
     if args.debug:
         out = model(inp.unsqueeze(0).to(args.device))
-        save_all_attention(model, save_dir="attn_mats")
+        save_all_attention(model, save_dir=f"attn_mats/{args.mech}")
+
+        out_np = (out.detach().squeeze().float().cpu().clamp(0, 1).numpy().transpose(1, 2, 0) * 255).round().astype(np.uint8)
+        gt_np = (gt.numpy().transpose(1, 2, 0) * 255).round().astype(np.uint8)
+        psnr = util.calculate_psnr(out_np, gt_np, crop_border=0)
+        ssim = util.calculate_ssim(out_np, gt_np, crop_border=0)
+        print(psnr, ssim)
+
     else:
         batch_test(dataset, model, save_dir)
