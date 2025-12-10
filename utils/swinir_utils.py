@@ -2,6 +2,87 @@ import cv2
 import numpy as np
 import torch
 
+import os
+from PIL import Image
+from torch.utils.data import Dataset
+import torchvision.transforms as T
+from models.swinir import SwinIR as net
+from utils import util_image as util
+
+def define_model(args, img_size):
+    model = net(mech = args.mech, num_landmarks=args.num_landmarks, iters =args.iters, upscale=args.scale, in_chans=3, img_size=img_size, window_size=args.window_size,
+                img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=180, num_heads=[6, 6, 6, 6, 6, 6],
+                mlp_ratio=2, upsampler='pixelshuffle', resi_connection='1conv')
+    param_key_g = 'params'
+    
+    pretrained_model = torch.load(args.model_path, weights_only=True)
+    state_dict = pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model
+
+    model_state_dict = model.state_dict()
+    filtered_state_dict = {}
+
+    for key, value in state_dict.items():
+        if key in model_state_dict:
+            if value.size() == model_state_dict[key].size():
+                filtered_state_dict[key] = value
+
+    model_state_dict.update(filtered_state_dict)
+    model.load_state_dict(model_state_dict)
+    return model
+
+class DatasetSR(Dataset):
+    def __init__(self, dataroot_H, dataroot_L=None,
+                 n_channels=3, scale=4,
+                 patch_size=96, phase='train'):
+
+        self.dataroot_H = dataroot_H
+        self.dataroot_L = dataroot_L
+        self.n_channels = n_channels
+        self.scale = scale
+        self.patch_size = patch_size
+        self.L_size = patch_size // scale
+        self.phase = phase
+
+        self.paths_H = util.get_image_paths(dataroot_H)
+        self.paths_L = util.get_image_paths(dataroot_L) if dataroot_L else None
+
+        assert self.paths_H
+        if self.paths_L:
+            assert len(self.paths_H) == len(self.paths_L)
+
+    def __getitem__(self, index):
+        H_path = self.paths_H[index]
+        img_H = util.uint2single(util.imread_uint(H_path, self.n_channels))
+        img_H = util.modcrop(img_H, self.scale)
+
+        if self.paths_L:
+            L_path = self.paths_L[index]
+            img_L = util.uint2single(util.imread_uint(L_path, self.n_channels))
+        else:
+            img_L = util.imresize_np(img_H, 1 / self.scale, True)
+            L_path = H_path
+
+        if self.phase == 'train':
+            H, W, _ = img_L.shape
+            rh = random.randint(0, H - self.L_size)
+            rw = random.randint(0, W - self.L_size)
+
+            img_L = img_L[rh:rh + self.L_size, rw:rw + self.L_size]
+            img_H = img_H[rh*self.scale:rh*self.scale + self.patch_size,
+                          rw*self.scale:rw*self.scale + self.patch_size]
+
+            mode = random.randint(0, 7)
+            img_L = util.augment_img(img_L, mode)
+            img_H = util.augment_img(img_H, mode)
+
+        img_H = util.single2tensor3(img_H)
+        img_L = util.single2tensor3(img_L)
+
+        return img_L, img_H, L_path, H_path
+
+    def __len__(self):
+        return len(self.paths_H)
+
 
 def calculate_psnr(img1, img2, crop_border, input_order='HWC', test_y_channel=False):
     """Calculate PSNR (Peak Signal-to-Noise Ratio).

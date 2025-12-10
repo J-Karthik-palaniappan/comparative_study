@@ -1,4 +1,4 @@
-python3 run_swinir.py \
+python run_swinir.py \
     --scale 4 \
     --model_path pretrained_models/SwinIR/x4.pth \
     --folder_lq  datasets/SwinIR/Set5/LR_bicubic/X4 \

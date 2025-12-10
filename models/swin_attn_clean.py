@@ -3,17 +3,12 @@ from torch import nn
 from timm.layers import trunc_normal_
 from attention import PnPNystraAttention, NystromAttention, PerformerAttention
 
-# PROBLEM 
-# Original Model Weights (Positional Bias) not loading because of architecture modification
-# Simpler Code in swin_attn.py
 class OriginalAttention(nn.Module):
-    def __init__(self, dim, window_size, num_heads, attn_drop=0.,
+    def __init__(self, dim, window_size, num_heads, relative_position_bias_table, attn_drop=0.,
                  *args, **kwargs):
         super().__init__()
-        # Positiona bias
         # define a parameter table of relative position bias
-        self.relative_position_bias_table = nn.Parameter(
-                torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+        self.relative_position_bias_table = relative_position_bias_table
         # get pair-wise relative position index for each token inside the window
         self.window_size = window_size
         coords_h = torch.arange(self.window_size[0])
@@ -32,15 +27,28 @@ class OriginalAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
         self.attn_drop = nn.Dropout(attn_drop)
 
+        # ======================================== debug ========================================
+        self.capture = {}
+        # ======================================== debug ========================================
+
     def forward(self, q, k, v, x_shape, mask=None, **kwargs):
 
         B_, N, C = x_shape
         attn = (q @ k.transpose(-2, -1))
+
+        # ======================================== debug ========================================
+        self.capture["pre"] = attn.detach().cpu()
+        # ======================================== debug ========================================
+
         
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
         attn = attn + relative_position_bias.unsqueeze(0)
+
+        # ======================================== debug ========================================
+        self.capture["mid"] = attn.detach().cpu()
+        # ======================================== debug ========================================
 
         if mask is not None:
             nW = mask.shape[0]
@@ -52,6 +60,9 @@ class OriginalAttention(nn.Module):
 
         attn = self.attn_drop(attn)
         x = attn @ v
+        # ======================================== debug ========================================
+        self.capture["post"] = attn.detach().cpu()
+        # ======================================== debug ========================================
         return x
 
 mechs = {
@@ -90,6 +101,9 @@ class WindowAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+        self.relative_position_bias_table = nn.Parameter(
+                torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+
         attn_cls = mechs.get(mech, OriginalAttention)
         self.attention = attn_cls(
             dim=self.dim,                      
@@ -98,6 +112,7 @@ class WindowAttention(nn.Module):
             attn_drop=attn_drop,
             iters=iters,
             num_landmarks=num_landmarks,
+            relative_position_bias_table = self.relative_position_bias_table #only original model uses bias
         )
 
     def forward(self, x, mask=None):

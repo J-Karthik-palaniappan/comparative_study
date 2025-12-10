@@ -3,7 +3,6 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 import cv2
-from torch.utils.data import Dataset
 import torchvision.transforms as T
 
 import os
@@ -12,7 +11,6 @@ import torch.nn.functional as F
 import random
 random.seed(42)
 
-from models.swinir import SwinIR as net
 from utils import swinir_utils as util
 
 def save_all_attention(model, save_dir="attn_mats"):
@@ -88,67 +86,9 @@ def tile_test(img_lq, model, args):
     output = E / W
     return output
 
-def define_model(args, img_size):
-    model = net(mech = args.mech, num_landmarks=args.num_landmarks, iters =args.iters, upscale=args.scale, in_chans=3, img_size=img_size, window_size=args.window_size,
-                img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=180, num_heads=[6, 6, 6, 6, 6, 6],
-                mlp_ratio=2, upsampler='pixelshuffle', resi_connection='1conv')
-    param_key_g = 'params'
-    
-    pretrained_model = torch.load(args.model_path, weights_only=True)
-    state_dict = pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model
-
-    model_state_dict = model.state_dict()
-    filtered_state_dict = {}
-
-    for key, value in state_dict.items():
-        if key in model_state_dict:
-            if value.size() == model_state_dict[key].size():
-                filtered_state_dict[key] = value
-
-    model_state_dict.update(filtered_state_dict)
-    model.load_state_dict(model_state_dict)
-    return model
-
-class SRDataset(Dataset):
-    def __init__(self, root, lq_dir="LQ", gt_dir="GT", zoom=4, return_filename=True, transform=None):
-        super().__init__()
-        self.return_filename = return_filename
-        self.root = root
-        self.zoom = zoom
-        self.lq_dir = os.path.join(root, lq_dir, f"X{zoom}")
-        self.gt_dir = os.path.join(root, gt_dir)
-        self.paths = sorted(os.listdir(self.gt_dir))
-        
-        self.transform = transform or T.ToTensor()
-
-    def __len__(self):
-        return len(self.paths)
-
-    def _load_img(self, path):
-        """Loads as PIL → RGB"""
-        return Image.open(path).convert("RGB")
-
-    def __getitem__(self, idx):
-        filename = self.paths[idx]
-
-        base, ext = os.path.splitext(filename)
-        lq_path = os.path.join(self.lq_dir, f"{base}x{self.zoom}{ext}")
-        gt_path = os.path.join(self.gt_dir, filename)
-
-        lq_img = self._load_img(lq_path)
-        gt_img = self._load_img(gt_path)
-
-        lq_tensor = self.transform(lq_img)   # C×H×W
-        gt_tensor = self.transform(gt_img)   # C×H×W
-
-        if self.return_filename:
-            return lq_tensor, gt_tensor, base
-        else:
-            return lq_tensor, gt_tensor
-    
 def batch_test(dataset, model, save_dir):
     metrics = []
-    for lq, gt, name in tqdm(dataset, desc="Processing"):
+    for lq, gt, lq_pth, gt_pth in tqdm(dataset, desc="Processing"):
         inp = pad(lq, args.window_size)
         with torch.no_grad():
             if args.tile:
@@ -160,6 +100,7 @@ def batch_test(dataset, model, save_dir):
         out = out[..., :H, :W]
         #save
         out_np = (out.squeeze().float().cpu().clamp(0, 1).numpy().transpose(1, 2, 0) * 255).round().astype(np.uint8)
+        name = os.path.splitext(os.path.basename(gt_pth))[0]
         save_path = os.path.join(save_dir, f"{name}_{args.mech}.png")
         cv2.imwrite(save_path, out_np[:, :, ::-1])
         #compare
@@ -178,7 +119,8 @@ if __name__ == "__main__":
     params = {
         "scale": 4,
         "model_path":"pretrained_models/SwinIR/x4.pth",
-        "root": "datasets/SwinIR/Set5",
+        "folder_gt": "datasets/SwinIR/Set5/HR",
+        "folder_lq": "datasets/SwinIR/Set5/LR_bicubic/X4",
         "mech":"nystrom",
         "device":"cuda",
         "num_landmarks":16,
@@ -192,17 +134,19 @@ if __name__ == "__main__":
         parser.add_argument(f"--{k}", default=v, type=type(v))
     args = parser.parse_args()
 
-    dataset = SRDataset(
-        root=args.root,
-        zoom = args.scale,
-        lq_dir="LR_bicubic",
-        gt_dir="HR",
+    dataset = util.DatasetSR(
+        scale = args.scale,
+        dataroot_L=args.folder_lq,
+        dataroot_H=args.folder_gt,
+        n_channels=3,
+        patch_size=64,
+        phase='test',
     )
-    lq, gt, name = dataset[0]
+    lq, gt, lq_pth, gt_pth = dataset[0]
     inp = pad(lq, args.window_size)
 
     print("Mech:", args.mech)
-    model = define_model(args, img_size=inp.shape[-1])
+    model = util.define_model(args, img_size=inp.shape[-1])
     model = model.to(args.device)
     model.eval()
 
@@ -212,7 +156,7 @@ if __name__ == "__main__":
     print("testing")
     if args.debug:
         out = model(inp.unsqueeze(0).to(args.device))
-        save_all_attention(model, save_dir=f"attn_mats/{args.mech}")
+        # save_all_attention(model, save_dir=f"attn_mats/{args.mech}")
 
         out_np = (out.detach().squeeze().float().cpu().clamp(0, 1).numpy().transpose(1, 2, 0) * 255).round().astype(np.uint8)
         gt_np = (gt.numpy().transpose(1, 2, 0) * 255).round().astype(np.uint8)
